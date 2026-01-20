@@ -1,17 +1,11 @@
 """
-CIFAR-10 2-Layer CNN Model.
+VGG19 Glaucoma Classification Model.
 
-A simple convolutional neural network for CIFAR-10 classification.
-This model demonstrates how to integrate PyTorch training with DerivaML
-execution tracking and asset management.
+A pretrained VGG19 model fine-tuned for binary glaucoma classification
+(Glaucoma vs No Glaucoma) on fundus images from the Eye-AI catalog.
 
-The model architecture:
-- Conv2d(3, 32) -> ReLU -> MaxPool2d
-- Conv2d(32, 64) -> ReLU -> MaxPool2d
-- Linear(64*8*8, hidden_size) -> ReLU
-- Linear(hidden_size, 10)
-
-Expected accuracy: ~60-70% with default parameters.
+The model uses transfer learning with ImageNet pretrained weights and
+replaces the final classifier layer for binary classification.
 
 Data Loading:
 The model uses DerivaML's restructure_assets() method to reorganize downloaded
@@ -19,17 +13,17 @@ images into a directory structure that torchvision's ImageFolder can consume:
 
     data_dir/
         training/
-            airplane/
-            automobile/
-            ...
+            No Glaucoma/
+            Suspected Glaucoma/
         testing/
-            airplane/
-            automobile/
-            ...
+            No Glaucoma/
+            Suspected Glaucoma/
+
+Note: Images labeled "Unknown" are filtered out for binary classification.
 
 Test Evaluation:
 After training, the model evaluates on the test set and records per-image
-classification predictions to the DerivaML catalog using the Image_Classification
+classification predictions to the DerivaML catalog using the Image_Diagnosis
 feature. This enables tracking of model predictions and comparison with ground
 truth labels.
 """
@@ -42,18 +36,24 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import DataLoader
-from torchvision import transforms
+from torch.utils.data import DataLoader, Subset
+from torchvision import models, transforms
 from torchvision.datasets import ImageFolder
 
 from deriva_ml import DerivaML, MLAsset, ExecAssetType
 from deriva_ml.execution import Execution
 
 
-def build_filename_to_rid_map(ml_instance: DerivaML) -> dict[str, str]:
-    """Build a mapping from filenames to RIDs from the Image asset table.
+# Binary classification: map diagnosis to binary label
+# "No Glaucoma" -> 0, "Suspected Glaucoma" -> 1
+GLAUCOMA_CLASSES = ["No Glaucoma", "Suspected Glaucoma"]
+EXCLUDED_CLASSES = ["Unknown"]
 
-    Queries all Image assets in the catalog to create a lookup table
+
+def build_filename_to_rid_map(ml_instance: DerivaML) -> dict[str, str]:
+    """Build a mapping from filenames to RIDs from the Image table.
+
+    Queries all Image records in the catalog to create a lookup table
     that maps image filenames to their catalog RIDs.
 
     Args:
@@ -62,8 +62,11 @@ def build_filename_to_rid_map(ml_instance: DerivaML) -> dict[str, str]:
     Returns:
         Dictionary mapping filename (without path) to RID.
     """
-    assets = ml_instance.list_assets("Image")
-    return {a["Filename"]: a["RID"] for a in assets if "Filename" in a and "RID" in a}
+    # Query the Image table directly using the path builder
+    # since Image may not have an Asset_Type association in all catalogs
+    table_path = ml_instance.domain_path.tables["Image"]
+    images = list(table_path.attributes(table_path.RID, table_path.Filename).fetch())
+    return {img["Filename"]: img["RID"] for img in images if "Filename" in img and "RID" in img}
 
 
 def record_test_predictions(
@@ -78,12 +81,11 @@ def record_test_predictions(
     """Record per-image classification predictions to the DerivaML catalog.
 
     Runs inference on the test set and records each prediction as an
-    Image_Classification feature value, linking the predicted class
-    to the image RID. Also includes the confidence (probability) of the
-    predicted class.
+    Image_Diagnosis feature value, linking the predicted diagnosis
+    to the image RID.
 
-    Additionally saves a CSV file with full probability distributions for
-    all classes, enabling detailed ROC curve analysis.
+    Additionally saves a CSV file with probability distributions for
+    ROC curve analysis.
 
     Args:
         model: Trained PyTorch model.
@@ -99,17 +101,24 @@ def record_test_predictions(
     """
     model.eval()
 
-    # Get the feature record class for Image_Classification
-    ImageClassification = ml_instance.feature_record_class("Image", "Image_Classification")
+    # Get the feature record class for Image_Diagnosis
+    ImageDiagnosis = ml_instance.feature_record_class("Image", "Image_Diagnosis")
 
     # Collect all predictions
     feature_records = []
 
-    # Collect data for CSV output (full probability distributions)
+    # Collect data for CSV output (probability distributions)
     csv_rows = []
 
     # Get the underlying dataset to access file paths
     test_dataset = test_loader.dataset
+    # Handle Subset wrapper if present
+    if isinstance(test_dataset, Subset):
+        base_dataset = test_dataset.dataset
+        indices = test_dataset.indices
+    else:
+        base_dataset = test_dataset
+        indices = list(range(len(test_dataset)))
 
     with torch.no_grad():
         sample_idx = 0
@@ -126,7 +135,8 @@ def record_test_predictions(
             # Process each sample in the batch
             for i in range(inputs.size(0)):
                 # Get the file path for this sample
-                img_path, _ = test_dataset.samples[sample_idx]
+                actual_idx = indices[sample_idx]
+                img_path, _ = base_dataset.samples[actual_idx]
                 filename = Path(img_path).name
 
                 # Get probability distribution for this sample
@@ -136,27 +146,26 @@ def record_test_predictions(
                 rid = filename_to_rid.get(filename)
                 if rid:
                     predicted_class = class_names[predicted[i].item()]
-                    confidence = confidences[i].item()
 
-                    # Record to catalog with confidence
+                    # Record to catalog
                     feature_records.append(
-                        ImageClassification(
+                        ImageDiagnosis(
                             Image=rid,
-                            Image_Class=predicted_class,
-                            Confidence=confidence,
+                            Diagnosis_Image=predicted_class,
                         )
                     )
 
-                    # Build CSV row with full probability distribution
+                    # Build CSV row with probability distribution
                     csv_row = {
                         "Image_RID": rid,
                         "Filename": filename,
                         "Predicted_Class": predicted_class,
-                        "Confidence": confidence,
+                        "Confidence": confidences[i].item(),
+                        "True_Label": class_names[labels[i].item()],
                     }
                     # Add probability for each class
                     for j, class_name in enumerate(class_names):
-                        csv_row[f"prob_{class_name}"] = probs[j]
+                        csv_row[f"prob_{class_name.replace(' ', '_')}"] = probs[j]
                     csv_rows.append(csv_row)
 
                 sample_idx += 1
@@ -164,17 +173,17 @@ def record_test_predictions(
     # Bulk add all predictions to the execution
     if feature_records:
         execution.add_features(feature_records)
-        print(f"  Recorded {len(feature_records)} classification predictions with confidence scores")
+        print(f"  Recorded {len(feature_records)} classification predictions")
     else:
         print("  WARNING: No predictions could be recorded (no RID matches)")
 
-    # Save full probability distributions to CSV
+    # Save probability distributions to CSV
     if csv_rows:
         csv_file = execution.asset_file_path(
             MLAsset.execution_asset, "prediction_probabilities.csv", ExecAssetType.output_file
         )
-        fieldnames = ["Image_RID", "Filename", "Predicted_Class", "Confidence"] + [
-            f"prob_{c}" for c in class_names
+        fieldnames = ["Image_RID", "Filename", "Predicted_Class", "Confidence", "True_Label"] + [
+            f"prob_{c.replace(' ', '_')}" for c in class_names
         ]
         with csv_file.open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -185,97 +194,125 @@ def record_test_predictions(
     return len(feature_records)
 
 
-class SimpleCNN(nn.Module):
-    """A simple 2-layer CNN for CIFAR-10 classification.
+class VGG19Classifier(nn.Module):
+    """VGG19 pretrained model adapted for binary glaucoma classification.
 
-    Architecture:
-        - Conv layer 1: 3 -> conv1_channels, 3x3 kernel, padding=1
-        - MaxPool 2x2 (32x32 -> 16x16)
-        - Conv layer 2: conv1_channels -> conv2_channels, 3x3 kernel, padding=1
-        - MaxPool 2x2 (16x16 -> 8x8)
-        - Fully connected: conv2_channels * 8 * 8 -> hidden_size
-        - Output: hidden_size -> 10 classes
+    Uses ImageNet pretrained weights and replaces the classifier head
+    for binary classification (No Glaucoma vs Suspected Glaucoma).
 
     Args:
-        conv1_channels: Number of output channels for first conv layer.
-        conv2_channels: Number of output channels for second conv layer.
-        hidden_size: Size of the hidden fully connected layer.
-        dropout_rate: Dropout probability for regularization.
+        num_classes: Number of output classes (default: 2 for binary).
+        pretrained: Whether to use ImageNet pretrained weights.
+        freeze_features: Whether to freeze the convolutional feature extractor.
+        dropout_rate: Dropout probability in the classifier.
     """
 
     def __init__(
         self,
-        conv1_channels: int = 32,
-        conv2_channels: int = 64,
-        hidden_size: int = 128,
-        dropout_rate: float = 0.0,
+        num_classes: int = 2,
+        pretrained: bool = True,
+        freeze_features: bool = False,
+        dropout_rate: float = 0.5,
     ):
         super().__init__()
-        self.conv1 = nn.Conv2d(3, conv1_channels, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(conv1_channels, conv2_channels, kernel_size=3, padding=1)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.dropout = nn.Dropout(dropout_rate)
 
-        # After two 2x2 pooling operations: 32x32 -> 16x16 -> 8x8
-        self.fc1 = nn.Linear(conv2_channels * 8 * 8, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, 10)
-        self.relu = nn.ReLU()
+        # Load pretrained VGG19
+        weights = models.VGG19_Weights.IMAGENET1K_V1 if pretrained else None
+        self.vgg19 = models.vgg19(weights=weights)
+
+        # Optionally freeze feature extractor
+        if freeze_features:
+            for param in self.vgg19.features.parameters():
+                param.requires_grad = False
+
+        # Replace classifier for binary classification
+        # VGG19 classifier: Linear(25088, 4096) -> ReLU -> Dropout -> Linear(4096, 4096) -> ReLU -> Dropout -> Linear(4096, 1000)
+        in_features = self.vgg19.classifier[0].in_features  # 25088
+        self.vgg19.classifier = nn.Sequential(
+            nn.Linear(in_features, 4096),
+            nn.ReLU(True),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(4096, 4096),
+            nn.ReLU(True),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(4096, num_classes),
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.pool(self.relu(self.conv1(x)))  # 32x32 -> 16x16
-        x = self.pool(self.relu(self.conv2(x)))  # 16x16 -> 8x8
-        x = x.view(x.size(0), -1)  # Flatten
-        x = self.dropout(self.relu(self.fc1(x)))
-        return self.fc2(x)
+        return self.vgg19(x)
 
 
-def load_cifar10_from_execution(
+def filter_unknown_class(dataset: ImageFolder) -> Subset:
+    """Filter out samples with 'Unknown' class label.
+
+    Args:
+        dataset: ImageFolder dataset with class labels.
+
+    Returns:
+        Subset containing only samples from valid classes.
+    """
+    valid_indices = []
+    for idx, (_, label) in enumerate(dataset.samples):
+        class_name = dataset.classes[label]
+        if class_name not in EXCLUDED_CLASSES:
+            valid_indices.append(idx)
+
+    print(f"  Filtered {len(dataset) - len(valid_indices)} 'Unknown' samples")
+    return Subset(dataset, valid_indices)
+
+
+def load_glaucoma_data_from_execution(
     execution: Execution,
     batch_size: int,
+    image_size: int = 224,
 ) -> tuple[DataLoader | None, DataLoader | None, list[str], Path]:
-    """Load CIFAR-10 data from DerivaML execution datasets.
+    """Load glaucoma data from DerivaML execution datasets.
 
     Uses DerivaML's restructure_assets() method to organize downloaded images
     into the directory structure expected by torchvision's ImageFolder.
-    Images are grouped by the Image_Classification feature value.
+    Images are grouped by the Image_Diagnosis feature value.
 
         data_dir/
             training/          # From dataset with type "Training"
-                airplane/      # From Image_Classification feature value
-                automobile/
-                ...
+                No Glaucoma/
+                Suspected Glaucoma/
             testing/           # From dataset with type "Testing"
-                airplane/
-                ...
+                No Glaucoma/
+                Suspected Glaucoma/
 
     Args:
         execution: DerivaML execution containing downloaded datasets.
         batch_size: Batch size for DataLoader.
+        image_size: Target image size (default: 224 for VGG19).
 
     Returns:
         Tuple of (train_loader, test_loader, class_names, data_dir).
         - train_loader: DataLoader for training data (or None)
-        - test_loader: DataLoader for test data with RID tracking (or None)
+        - test_loader: DataLoader for test data (or None)
         - class_names: List of class names in index order
         - data_dir: The restructured directory path
     """
+    # VGG19 expects 224x224 images normalized with ImageNet stats
     transform = transforms.Compose([
+        transforms.Resize((image_size, image_size)),
         transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],  # ImageNet means
+            std=[0.229, 0.224, 0.225],   # ImageNet stds
+        )
     ])
 
     # Create output directory for restructured data
-    data_dir = execution.working_dir / "cifar10_data"
+    data_dir = execution.working_dir / "glaucoma_data"
     data_dir.mkdir(parents=True, exist_ok=True)
 
     # Restructure assets from each dataset
-    # The type_selector picks which dataset type to use for the directory name
     def type_selector(types: list[str]) -> str:
         """Select dataset type for directory structure."""
         type_lower = [t.lower() for t in types]
         if "training" in type_lower:
             return "training"
-        elif "testing" in type_lower:
+        elif "testing" in type_lower or "test" in type_lower:
             return "testing"
         elif types:
             return types[0].lower()
@@ -283,29 +320,28 @@ def load_cifar10_from_execution(
 
     # Process each dataset in the execution
     for dataset in execution.datasets:
-        # Restructure images by dataset type and label
-        # This creates: data_dir/<dataset_type>/<label>/image.png
+        # Restructure images by dataset type and diagnosis label
+        # This creates: data_dir/<dataset_type>/<diagnosis>/image.png
         dataset.restructure_assets(
             asset_table="Image",
             output_dir=data_dir,
-            group_by=["Image_Classification"],  # Group by feature to create class subdirs
+            group_by=["Image_Diagnosis.Diagnosis_Image"],  # Use Diagnosis_Image column from Image_Diagnosis feature
             use_symlinks=True,
             type_selector=type_selector,
+            enforce_vocabulary=False,  # Allow multiple values, use first found
         )
 
     # Create DataLoaders
     train_loader = None
     test_loader = None
-    class_names: list[str] = []
+    class_names: list[str] = GLAUCOMA_CLASSES.copy()
 
-    # Find training and testing directories (may be nested under dataset type like "split")
+    # Find training and testing directories
     def find_data_dir(base_dir: Path, target_name: str) -> Path | None:
         """Find a directory with the given name, searching recursively."""
-        # First check direct path
         direct_path = base_dir / target_name
         if direct_path.exists() and any(direct_path.iterdir()):
             return direct_path
-        # Search recursively for nested datasets
         for subdir in base_dir.iterdir():
             if subdir.is_dir():
                 nested_path = subdir / target_name
@@ -316,53 +352,54 @@ def load_cifar10_from_execution(
     train_dir = find_data_dir(data_dir, "training")
     if train_dir:
         train_dataset = ImageFolder(train_dir, transform=transform)
+        # Filter out Unknown class
+        train_subset = filter_unknown_class(train_dataset)
         train_loader = DataLoader(
-            train_dataset,
+            train_subset,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=0,  # Set to 0 for compatibility
+            num_workers=0,
         )
-        class_names = train_dataset.classes
         print(f"  Training classes: {train_dataset.classes}")
-        print(f"  Training samples: {len(train_dataset)}")
+        print(f"  Training samples (after filtering): {len(train_subset)}")
 
     test_dir = find_data_dir(data_dir, "testing")
     if test_dir:
         test_dataset = ImageFolder(test_dir, transform=transform)
+        # Filter out Unknown class
+        test_subset = filter_unknown_class(test_dataset)
         test_loader = DataLoader(
-            test_dataset,
+            test_subset,
             batch_size=batch_size,
             shuffle=False,
             num_workers=0,
         )
-        # Use test classes if no training data
-        if not class_names:
-            class_names = test_dataset.classes
         print(f"  Testing classes: {test_dataset.classes}")
-        print(f"  Testing samples: {len(test_dataset)}")
+        print(f"  Testing samples (after filtering): {len(test_subset)}")
 
     return train_loader, test_loader, class_names, data_dir
 
 
-def cifar10_cnn(
+def vgg19_glaucoma(
     # Model architecture parameters
-    conv1_channels: int = 32,
-    conv2_channels: int = 64,
-    hidden_size: int = 128,
-    dropout_rate: float = 0.0,
+    pretrained: bool = True,
+    freeze_features: bool = False,
+    dropout_rate: float = 0.5,
     # Training parameters
-    learning_rate: float = 1e-3,
+    learning_rate: float = 1e-4,
     epochs: int = 10,
-    batch_size: int = 64,
-    weight_decay: float = 0.0,
+    batch_size: int = 32,
+    weight_decay: float = 1e-4,
+    # Image parameters
+    image_size: int = 224,
     # Test-only mode
     test_only: bool = False,
-    weights_filename: str = "cifar10_cnn_weights.pt",
+    weights_filename: str = "vgg19_glaucoma_weights.pt",
     # DerivaML integration
     ml_instance: DerivaML = None,
     execution: Execution | None = None,
 ) -> None:
-    """Train or evaluate a simple 2-layer CNN on CIFAR-10 data.
+    """Train or evaluate VGG19 for binary glaucoma classification.
 
     This function integrates with DerivaML to:
     - Load data from execution datasets using restructure_assets()
@@ -370,54 +407,63 @@ def cifar10_cnn(
     - Save model weights as execution assets
     - Record per-image predictions to the catalog
 
-    The function expects datasets containing Image assets with Image_Classification
-    feature values. Images are reorganized into a directory structure by dataset type
-    (training/testing) and class label, then loaded using torchvision's ImageFolder.
+    The function expects datasets containing Image assets with Image_Diagnosis
+    feature values. Images are reorganized into a directory structure by dataset
+    type (training/testing) and diagnosis label, then loaded using ImageFolder.
+
+    Binary Classification:
+        The model classifies fundus images as either "No Glaucoma" or
+        "Suspected Glaucoma". Images labeled "Unknown" are filtered out.
 
     Test-only mode:
-        When test_only=True, the model loads pre-trained weights from an execution
-        asset and runs evaluation on the test set without training. Use this with
-        the assets configuration to specify which weights to load.
+        When test_only=True, the model loads pre-trained weights from an
+        execution asset and runs evaluation on the test set without training.
 
     Args:
-        conv1_channels: Output channels for first conv layer.
-        conv2_channels: Output channels for second conv layer.
-        hidden_size: Hidden layer size in fully connected layers.
-        dropout_rate: Dropout probability (0.0 = no dropout).
-        learning_rate: Optimizer learning rate.
-        epochs: Number of training epochs.
-        batch_size: Training batch size.
-        weight_decay: L2 regularization weight decay.
-        test_only: If True, skip training and only run evaluation on test data.
-        weights_filename: Filename of weights asset to load in test_only mode.
+        pretrained: Use ImageNet pretrained weights (default: True).
+        freeze_features: Freeze the convolutional layers (default: False).
+        dropout_rate: Dropout probability in classifier (default: 0.5).
+        learning_rate: Optimizer learning rate (default: 1e-4).
+        epochs: Number of training epochs (default: 10).
+        batch_size: Training batch size (default: 32).
+        weight_decay: L2 regularization weight decay (default: 1e-4).
+        image_size: Input image size (default: 224).
+        test_only: Skip training and only run evaluation (default: False).
+        weights_filename: Filename for weights file (default: vgg19_glaucoma_weights.pt).
         ml_instance: DerivaML instance for catalog access.
         execution: DerivaML execution context with datasets and assets.
     """
     mode = "Test-only" if test_only else "Training"
-    print(f"CIFAR-10 CNN {mode}")
+    print(f"VGG19 Glaucoma Classification ({mode})")
     print(f"  Host: {ml_instance.host_name}, Catalog: {ml_instance.catalog_id}")
-    print(f"  Architecture: conv1={conv1_channels}, conv2={conv2_channels}, hidden={hidden_size}")
+    print(f"  Architecture: VGG19, pretrained={pretrained}, freeze_features={freeze_features}")
     if not test_only:
         print(f"  Training: lr={learning_rate}, epochs={epochs}, batch_size={batch_size}")
 
     # Determine device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     print(f"  Device: {device}")
 
     # Create model
-    model = SimpleCNN(
-        conv1_channels=conv1_channels,
-        conv2_channels=conv2_channels,
-        hidden_size=hidden_size,
+    model = VGG19Classifier(
+        num_classes=2,
+        pretrained=pretrained,
+        freeze_features=freeze_features,
         dropout_rate=dropout_rate,
     ).to(device)
 
     # Load data from execution datasets
     print("\nLoading and restructuring data from execution datasets...")
-    train_loader, test_loader, class_names, data_dir = load_cifar10_from_execution(
-        execution, batch_size
+    train_loader, test_loader, class_names, data_dir = load_glaucoma_data_from_execution(
+        execution, batch_size, image_size
     )
     print(f"  Data directory: {data_dir}")
+    print(f"  Classes: {class_names}")
 
     # Build filename -> RID mapping for recording predictions
     filename_to_rid = build_filename_to_rid_map(ml_instance)
@@ -432,15 +478,7 @@ def cifar10_cnn(
 
         print(f"  Test batches: {len(test_loader)}")
 
-        # For test-only mode, use standard CIFAR-10 class names since test data may not have labels
-        cifar10_classes = ['airplane', 'automobile', 'bird', 'cat', 'deer',
-                          'dog', 'frog', 'horse', 'ship', 'truck']
-        if class_names == ['unknown'] or len(class_names) != 10:
-            print(f"  Using standard CIFAR-10 class names (test data has: {class_names})")
-            class_names = cifar10_classes
-
         # Find weights file in execution assets
-        # asset_paths is a dict: {table_name: [AssetFilePath, ...]}
         weights_path = None
         all_assets = []
         for table_name, paths in execution.asset_paths.items():
@@ -454,7 +492,6 @@ def cifar10_cnn(
 
         if weights_path is None:
             print(f"ERROR: Weights file '{weights_filename}' not found in execution assets.")
-            print("  Make sure to include the weights asset in your assets configuration.")
             print(f"  Available assets: {[p.name for p in all_assets]}")
             return
 
@@ -465,11 +502,10 @@ def cifar10_cnn(
         if 'config' in checkpoint:
             config = checkpoint['config']
             print(f"  Checkpoint config: {config}")
-            # Recreate model with saved config
-            model = SimpleCNN(
-                conv1_channels=config.get('conv1_channels', conv1_channels),
-                conv2_channels=config.get('conv2_channels', conv2_channels),
-                hidden_size=config.get('hidden_size', hidden_size),
+            model = VGG19Classifier(
+                num_classes=2,
+                pretrained=False,  # Don't load ImageNet weights
+                freeze_features=config.get('freeze_features', freeze_features),
                 dropout_rate=config.get('dropout_rate', dropout_rate),
             ).to(device)
 
@@ -477,61 +513,21 @@ def cifar10_cnn(
         print("  Weights loaded successfully")
 
         # Run evaluation
-        print("\nEvaluating on test set...")
-        model.eval()
-        criterion = nn.CrossEntropyLoss()
-        test_correct = 0
-        test_total = 0
-        test_loss = 0.0
-
-        with torch.no_grad():
-            for inputs, labels in test_loader:
-                inputs, labels = inputs.to(device), labels.to(device)
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
-                test_loss += loss.item()
-                _, predicted = outputs.max(1)
-                test_total += labels.size(0)
-                test_correct += predicted.eq(labels).sum().item()
-
-        test_acc = 100.0 * test_correct / test_total
-        test_loss = test_loss / len(test_loader)
-        print(f"  Test loss: {test_loss:.4f}, Test accuracy: {test_acc:.2f}%")
-
-        # Record predictions to catalog
-        if class_names and filename_to_rid:
-            print("\nRecording test predictions to catalog...")
-            record_test_predictions(
-                model=model,
-                test_loader=test_loader,
-                class_names=class_names,
-                filename_to_rid=filename_to_rid,
-                execution=execution,
-                ml_instance=ml_instance,
-                device=device,
-            )
-
-        # Save evaluation results
-        results_file = execution.asset_file_path(
-            MLAsset.execution_asset, "evaluation_results.txt", ExecAssetType.output_file
+        _evaluate_and_save(
+            model=model,
+            test_loader=test_loader,
+            class_names=class_names,
+            filename_to_rid=filename_to_rid,
+            execution=execution,
+            ml_instance=ml_instance,
+            device=device,
+            weights_filename=weights_filename,
         )
-        with results_file.open("w") as f:
-            f.write("CIFAR-10 CNN Evaluation Results\n")
-            f.write("=" * 50 + "\n\n")
-            f.write(f"Weights file: {weights_filename}\n")
-            f.write(f"Test samples: {test_total}\n")
-            f.write(f"Test loss: {test_loss:.4f}\n")
-            f.write(f"Test accuracy: {test_acc:.2f}%\n")
-        print(f"  Saved results to: {results_file}")
-
-        print("\nEvaluation complete!")
         return
 
     # Training mode: check for training data
     if train_loader is None:
         print("WARNING: No training data found in execution datasets.")
-        print("  Make sure your execution configuration includes CIFAR-10 datasets.")
-        # Write a status file indicating no data
         status_file = execution.asset_file_path(
             MLAsset.execution_asset, "training_status.txt", ExecAssetType.output_file
         )
@@ -550,6 +546,9 @@ def cifar10_cnn(
         lr=learning_rate,
         weight_decay=weight_decay
     )
+
+    # Learning rate scheduler
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
     # Training loop
     print("\nTraining...")
@@ -575,6 +574,7 @@ def cifar10_cnn(
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
 
+        scheduler.step()
         epoch_loss = running_loss / len(train_loader)
         epoch_acc = 100.0 * correct / total
 
@@ -582,6 +582,7 @@ def cifar10_cnn(
             'epoch': epoch + 1,
             'train_loss': epoch_loss,
             'train_acc': epoch_acc,
+            'learning_rate': scheduler.get_last_lr()[0],
         }
 
         # Evaluate on test set if available
@@ -618,18 +619,19 @@ def cifar10_cnn(
     # Save model weights
     print("\nSaving model...")
     weights_file = execution.asset_file_path(
-        MLAsset.execution_asset, "cifar10_cnn_weights.pt", ExecAssetType.model_file
+        MLAsset.execution_asset, "vgg19_glaucoma_weights.pt", ExecAssetType.model_file
     )
     torch.save({
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'config': {
-            'conv1_channels': conv1_channels,
-            'conv2_channels': conv2_channels,
-            'hidden_size': hidden_size,
+            'pretrained': pretrained,
+            'freeze_features': freeze_features,
             'dropout_rate': dropout_rate,
+            'image_size': image_size,
         },
         'training_log': training_log,
+        'class_names': class_names,
     }, weights_file)
     print(f"  Saved weights to: {weights_file}")
 
@@ -638,13 +640,13 @@ def cifar10_cnn(
         MLAsset.execution_asset, "training_log.txt", ExecAssetType.output_file
     )
     with log_file.open("w") as f:
-        f.write("CIFAR-10 CNN Training Log\n")
+        f.write("VGG19 Glaucoma Classification Training Log\n")
         f.write("=" * 50 + "\n\n")
         f.write("Architecture:\n")
-        f.write(f"  conv1_channels: {conv1_channels}\n")
-        f.write(f"  conv2_channels: {conv2_channels}\n")
-        f.write(f"  hidden_size: {hidden_size}\n")
-        f.write(f"  dropout_rate: {dropout_rate}\n\n")
+        f.write(f"  pretrained: {pretrained}\n")
+        f.write(f"  freeze_features: {freeze_features}\n")
+        f.write(f"  dropout_rate: {dropout_rate}\n")
+        f.write(f"  image_size: {image_size}\n\n")
         f.write("Training Parameters:\n")
         f.write(f"  learning_rate: {learning_rate}\n")
         f.write(f"  epochs: {epochs}\n")
@@ -659,7 +661,7 @@ def cifar10_cnn(
     print(f"  Saved log to: {log_file}")
 
     # Record test predictions to catalog if test data is available
-    if test_loader and class_names and filename_to_rid:
+    if test_loader and filename_to_rid:
         print("\nRecording test predictions to catalog...")
         record_test_predictions(
             model=model,
@@ -672,3 +674,64 @@ def cifar10_cnn(
         )
 
     print("\nTraining complete!")
+
+
+def _evaluate_and_save(
+    model: nn.Module,
+    test_loader: DataLoader,
+    class_names: list[str],
+    filename_to_rid: dict[str, str],
+    execution: Execution,
+    ml_instance: DerivaML,
+    device: torch.device,
+    weights_filename: str,
+) -> None:
+    """Evaluate model and save results (used in test-only mode)."""
+    print("\nEvaluating on test set...")
+    model.eval()
+    criterion = nn.CrossEntropyLoss()
+    test_correct = 0
+    test_total = 0
+    test_loss = 0.0
+
+    with torch.no_grad():
+        for inputs, labels in test_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            test_loss += loss.item()
+            _, predicted = outputs.max(1)
+            test_total += labels.size(0)
+            test_correct += predicted.eq(labels).sum().item()
+
+    test_acc = 100.0 * test_correct / test_total
+    test_loss = test_loss / len(test_loader)
+    print(f"  Test loss: {test_loss:.4f}, Test accuracy: {test_acc:.2f}%")
+
+    # Record predictions to catalog
+    if filename_to_rid:
+        print("\nRecording test predictions to catalog...")
+        record_test_predictions(
+            model=model,
+            test_loader=test_loader,
+            class_names=class_names,
+            filename_to_rid=filename_to_rid,
+            execution=execution,
+            ml_instance=ml_instance,
+            device=device,
+        )
+
+    # Save evaluation results
+    results_file = execution.asset_file_path(
+        MLAsset.execution_asset, "evaluation_results.txt", ExecAssetType.output_file
+    )
+    with results_file.open("w") as f:
+        f.write("VGG19 Glaucoma Classification Evaluation Results\n")
+        f.write("=" * 50 + "\n\n")
+        f.write(f"Weights file: {weights_filename}\n")
+        f.write(f"Test samples: {test_total}\n")
+        f.write(f"Test loss: {test_loss:.4f}\n")
+        f.write(f"Test accuracy: {test_acc:.2f}%\n")
+    print(f"  Saved results to: {results_file}")
+
+    print("\nEvaluation complete!")

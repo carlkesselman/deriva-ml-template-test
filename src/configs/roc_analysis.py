@@ -16,20 +16,18 @@ Usage:
 
         # Run with specific configuration
         deriva-ml-run-notebook notebooks/roc_analysis.ipynb \\
-            --host localhost --catalog 65 \\
-            --config roc_quick_vs_extended
+            --host dev.eye-ai.org --catalog eye-ai \\
+            --config roc_analysis
 
         # Or override assets directly
         deriva-ml-run-notebook notebooks/roc_analysis.ipynb \\
-            assets=roc_lr_sweep
+            assets=<your_asset_config>
 
 Available Configurations:
-    - roc_analysis: Default (quick vs extended on small dataset)
-    - roc_quick_vs_extended: Compare quick vs extended training (small dataset)
-    - roc_full_quick_vs_extended: Compare quick vs extended training (full dataset)
-    - roc_lr_sweep: Compare learning rate sweep (0.0001, 0.001, 0.01, 0.1)
-    - roc_epoch_sweep: Compare epoch sweep (5, 10, 25, 50 epochs)
-    - roc_lr_batch_grid: Compare LR x batch size grid (2x2)
+    - roc_analysis: Default ROC curve analysis
+
+Note: Asset RIDs for prediction probability files should be added to
+configs/assets.py after running VGG19 experiments.
 
 Configuration Groups:
     - deriva_ml: DerivaML connection settings (default_deriva, eye_ai, etc.)
@@ -60,46 +58,25 @@ class ROCAnalysisConfig(BaseConfig):
 # ROC Analysis Notebook Configurations
 # =============================================================================
 
-# Default: Use quick vs extended comparison
-# Note: Use "no_datasets" to avoid type conflicts with with_description wrapped datasets
+# Default: Use no assets (must be specified at runtime after experiments are run)
 notebook_config(
     "roc_analysis",
     config_class=ROCAnalysisConfig,
-    defaults={"assets": "roc_quick_vs_extended", "datasets": "no_datasets"},
-    description="ROC curve analysis (default: quick vs extended training)",
+    defaults={"assets": "no_assets", "datasets": "no_datasets"},
+    description="ROC curve analysis for VGG19 glaucoma classification",
 )
 
 # -----------------------------------------------------------------------------
-# Model Comparison Configurations
+# Additional Configurations (add after running experiments)
 # -----------------------------------------------------------------------------
-# Each configuration references prediction probability files from the
-# corresponding multirun experiment. All use "no_datasets" since ROC analysis
-# only needs assets (prediction probability files).
-
-notebook_config(
-    "roc_quick_vs_extended",
-    config_class=ROCAnalysisConfig,
-    defaults={"assets": "roc_quick_vs_extended", "datasets": "no_datasets"},
-    description="ROC analysis: quick (3 epochs) vs extended (50 epochs) training",
-)
-
-notebook_config(
-    "roc_lr_sweep",
-    config_class=ROCAnalysisConfig,
-    defaults={"assets": "roc_lr_sweep", "datasets": "no_datasets"},
-    description="ROC analysis: learning rate sweep (0.0001, 0.001, 0.01, 0.1)",
-)
-
-notebook_config(
-    "roc_epoch_sweep",
-    config_class=ROCAnalysisConfig,
-    defaults={"assets": "roc_epoch_sweep", "datasets": "no_datasets"},
-    description="ROC analysis: epoch sweep (5, 10, 25, 50 epochs)",
-)
-
-notebook_config(
-    "roc_lr_batch_grid",
-    config_class=ROCAnalysisConfig,
-    defaults={"assets": "roc_lr_batch_grid", "datasets": "no_datasets"},
-    description="ROC analysis: LR x batch size grid (2x2)",
-)
+# After running VGG19 experiments and obtaining prediction probability files,
+# add their RIDs to configs/assets.py and create configurations here.
+#
+# Example:
+#
+# notebook_config(
+#     "roc_vgg19_comparison",
+#     config_class=ROCAnalysisConfig,
+#     defaults={"assets": "roc_vgg19_comparison", "datasets": "no_datasets"},
+#     description="ROC analysis: VGG19 model comparison",
+# )

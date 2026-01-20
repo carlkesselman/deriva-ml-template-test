@@ -1,18 +1,16 @@
 
 [project]
-name = "deriva-ml-model-template"  # Change this to be the name of the current project.
+name = "vgg19-glaucoma"
 dynamic = ["version"]
 authors = [
     {name = "ISRD", email = "isrd-dev@isi.edu"},
 ]
-description = "A test template for using DerivaML"
+description = "VGG19 model for glaucoma classification using DerivaML"
 readme = "README.md"
 requires-python = ">=3.12"
 
 dependencies = [
-    # Change this to be the module with the domain specific class derived from deriva-ml.
     "deriva-ml",
-    "kaggle>=1.8.3",
     "notebook>=7.4.7",
     "torchvision",
     # For ROC analysis notebook
@@ -21,9 +19,6 @@ dependencies = [
     "scikit-learn",
     "ipykernel>=7.1.0",
 ]
-
-[project.scripts]
-load-cifar10 = "scripts.load_cifar10:main"
 
 [dependency-groups]
 dev = [
@@ -72,10 +67,6 @@ explicit = true
 
 [tool.uv.sources]
 deriva-ml = { path = "../deriva-ml", editable = true }
-   # torch = [
-   #     { index = "pytorch-cpu", marker = "(sys_platform == 'darwin' and platform_machine == 'arm64') or (platform_machine != 'x86_64' and sys_platform == 'Linux')"},
-   #     { index = "pytorch-cuda", marker = "sys_platform == 'Linux' and platform_machine == 'x86_64'"}
-   # ]
 
 [tool.setuptools_scm]
 version_scheme = "post-release"
@@ -94,4 +85,4 @@ build-backend = "setuptools.build_meta"
 
 [metadata]
 license = "Apache 2.0"
-keywords = ["deriva-ml"]
+keywords = ["deriva-ml", "glaucoma", "vgg19", "medical-imaging"]

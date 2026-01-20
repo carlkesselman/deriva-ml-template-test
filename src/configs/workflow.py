@@ -13,10 +13,10 @@ This is used as the default workflow when no override is specified.
 
 Example usage:
     # Use default workflow
-    uv run src/deriva_run.py
+    uv run deriva-ml-run
 
     # Use a specific workflow
-    uv run src/deriva_run.py workflow=cifar10_cnn
+    uv run deriva-ml-run workflow=vgg19_glaucoma
 """
 
 from hydra_zen import store, builds
@@ -27,27 +27,37 @@ from deriva_ml.execution import Workflow
 # Workflow Configurations
 # ---------------------------------------------------------------------------
 
-# CIFAR-10 CNN workflow - default for this template
-Cifar10CNNWorkflow = builds(
+# VGG19 Glaucoma Classification workflow - default for this project
+VGG19GlaucomaWorkflow = builds(
     Workflow,
-    name="CIFAR-10 2-Layer CNN",
-    workflow_type="Image Classification",
+    name="VGG19 Glaucoma Classification",
+    workflow_type="VGG19 Catalog Model training",
     description="""
-Train a 2-layer convolutional neural network on CIFAR-10 image data.
+Train a VGG19 model for binary glaucoma classification on fundus images.
+
+## Task
+Binary classification of fundus images:
+- **No Glaucoma**: Healthy eye
+- **Suspected Glaucoma**: Glaucoma indicators present
 
 ## Architecture
-- **Conv Layer 1**: 3 → 32 channels, 3×3 kernel, ReLU, MaxPool 2×2
-- **Conv Layer 2**: 32 → 64 channels, 3×3 kernel, ReLU, MaxPool 2×2
-- **FC Layer**: 64×8×8 → 128 hidden units → 10 classes
+- **Backbone**: VGG19 pretrained on ImageNet
+- **Classifier**: 4096 → 4096 → 2 (binary output)
+- **Input**: 224×224 RGB fundus images
 
 ## Features
-- Configurable architecture (channel sizes, hidden units, dropout)
-- Training with Adam optimizer and cross-entropy loss
+- Transfer learning with ImageNet pretrained weights
+- Configurable: freeze features, dropout, learning rate schedules
 - Automatic data loading from DerivaML datasets via `restructure_assets()`
+- Filters out "Unknown" labels for clean binary classification
 - Outputs: model weights (`.pt`) and training log
 
+## Data Requirements
+Datasets must contain Image assets with Image_Diagnosis feature values.
+Images labeled "Unknown" are automatically filtered out.
+
 ## Expected Performance
-~60-70% test accuracy with default parameters on CIFAR-10.
+Depends on dataset size and quality. Typical range: 80-95% accuracy.
 """.strip(),
     populate_full_signature=True,
 )
@@ -60,7 +70,7 @@ Train a 2-layer convolutional neural network on CIFAR-10 image data.
 workflow_store = store(group="workflow")
 
 # REQUIRED: default_workflow - used when no workflow is specified
-workflow_store(Cifar10CNNWorkflow, name="default_workflow")
+workflow_store(VGG19GlaucomaWorkflow, name="default_workflow")
 
 # Additional workflow configurations
-workflow_store(Cifar10CNNWorkflow, name="cifar10_cnn")
+workflow_store(VGG19GlaucomaWorkflow, name="vgg19_glaucoma")

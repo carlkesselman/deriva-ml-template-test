@@ -13,10 +13,10 @@ This is used as the default dataset when no override is specified.
 
 Example usage:
     # Use default dataset
-    uv run src/deriva_run.py
+    uv run deriva-ml-run
 
     # Use a specific dataset
-    uv run src/deriva_run.py datasets=cifar10_training
+    uv run deriva-ml-run datasets=graded_training
 
     # Combine multiple datasets
     datasets_combined = [
@@ -36,7 +36,7 @@ from deriva_ml.execution import with_description
 # match the parameter name in BaseConfig.
 
 # =============================================================================
-# Catalog 2: CIFAR-10 E2E Test with 1,000 images (localhost, schema: cifar10_e2e_test)
+# Eye-AI Glaucoma Classification Datasets (dev.eye-ai.org, schema: eye-ai)
 # =============================================================================
 
 datasets_store = store(group="datasets")
@@ -48,147 +48,138 @@ datasets_store(
 )
 
 # -----------------------------------------------------------------------------
-# Full datasets (1,000 images total in this catalog)
+# Small test dataset (for quick testing and debugging)
 # -----------------------------------------------------------------------------
 
 datasets_store(
     with_description(
-        [DatasetSpecConfig(rid="AWP", version="0.3.0")],
-        "Complete CIFAR-10 dataset with all 1,000 images (500 training + 500 testing). "
-        "Use for full-scale experiments.",
-    ),
-    name="cifar10_complete",
-)
-
-datasets_store(
-    with_description(
-        [DatasetSpecConfig(rid="AX0", version="0.4.0")],
-        "Split dataset containing nested training (500) and testing (500) subsets. "
-        "Testing images are unlabeled. Use for standard train/test workflows.",
-    ),
-    name="cifar10_split",
-)
-
-datasets_store(
-    with_description(
-        [DatasetSpecConfig(rid="AX8", version="0.4.0")],
-        "Training partition with 500 labeled CIFAR-10 images. "
-        "All images have ground truth classifications.",
-    ),
-    name="cifar10_training",
-)
-
-datasets_store(
-    with_description(
-        [DatasetSpecConfig(rid="AXJ", version="0.4.0")],
-        "Testing partition with 500 CIFAR-10 images. "
-        "These images are unlabeled (no ground truth) for blind evaluation.",
-    ),
-    name="cifar10_testing",
-)
-
-# -----------------------------------------------------------------------------
-# Small datasets for quick testing (1,000 images total)
-# -----------------------------------------------------------------------------
-
-datasets_store(
-    with_description(
-        [DatasetSpecConfig(rid="AY6", version="0.4.0")],
-        "Small split dataset with 1,000 images (500 training + 500 testing). "
-        "Use for quick iteration and debugging.",
-    ),
-    name="cifar10_small_split",
-)
-
-datasets_store(
-    with_description(
-        [DatasetSpecConfig(rid="AYE", version="0.4.0")],
-        "Small training set with 500 labeled images. "
+        [DatasetSpecConfig(rid="5-XW4J", version="0.3.0")],
+        "Small image test dataset for quick debugging and validation. "
         "Use for rapid prototyping and testing model code.",
     ),
-    name="cifar10_small_training",
-)
-
-datasets_store(
-    with_description(
-        [DatasetSpecConfig(rid="AYR", version="0.4.0")],
-        "Small testing set with 500 unlabeled images. "
-        "Use for quick inference testing.",
-    ),
-    name="cifar10_small_testing",
+    name="test_small",
 )
 
 # -----------------------------------------------------------------------------
-# Labeled split datasets (for ROC analysis)
-# Created from training images only - ALL have ground truth labels
+# 10% Subset datasets (for quick experiments)
 # -----------------------------------------------------------------------------
 
 datasets_store(
     with_description(
-        [DatasetSpecConfig(rid="AZC", version="0.4.0")],
-        "Labeled split dataset with 500 images (400 train + 100 test). "
-        "BOTH partitions have ground truth labels, enabling ROC curve analysis "
-        "and proper evaluation metrics on the test set.",
+        [DatasetSpecConfig(rid="2-A5T0", version="3.3.0")],
+        "10% Training Dataset - subset of the full training dataset. "
+        "Use for quick experiments and hyperparameter tuning.",
     ),
-    name="cifar10_labeled_split",
+    name="subset_10pct_training",
 )
 
 datasets_store(
     with_description(
-        [DatasetSpecConfig(rid="AZP", version="0.4.0")],
-        "Labeled training partition with 400 images. "
-        "All images have ground truth classifications.",
+        [DatasetSpecConfig(rid="2-A5T4", version="3.3.0")],
+        "10% Test Dataset - subset of the full test dataset. "
+        "Use for quick evaluation during development.",
     ),
-    name="cifar10_labeled_training",
+    name="subset_10pct_test",
 )
 
 datasets_store(
     with_description(
-        [DatasetSpecConfig(rid="B00", version="0.4.0")],
-        "Labeled testing partition with 100 images WITH ground truth. "
-        "Use for evaluation when you need metrics like accuracy, ROC curves, etc.",
+        [
+            DatasetSpecConfig(rid="2-A5T0", version="3.3.0"),
+            DatasetSpecConfig(rid="2-A5T4", version="3.3.0"),
+        ],
+        "10% Train + Test combined - both subsets for quick training and evaluation.",
     ),
-    name="cifar10_labeled_testing",
+    name="subset_10pct_combined",
 )
 
 # -----------------------------------------------------------------------------
-# Small labeled datasets (500 images total, all labeled)
+# Graded datasets (balanced by diagnosis category)
 # -----------------------------------------------------------------------------
 
 datasets_store(
     with_description(
-        [DatasetSpecConfig(rid="B0M", version="0.4.0")],
-        "Small labeled split with 500 images (400 train + 100 test). "
-        "Both partitions have labels. Use for quick testing with evaluation metrics.",
+        [DatasetSpecConfig(rid="2-36BW", version="9.3.0")],
+        "Graded Training Dataset - 800 subjects per diagnosis category. "
+        "Balanced subset from the full training dataset. "
+        "Use for training with balanced class distribution.",
     ),
-    name="cifar10_small_labeled_split",
+    name="graded_training",
 )
 
 datasets_store(
     with_description(
-        [DatasetSpecConfig(rid="B0Y", version="0.4.0")],
-        "Small labeled training set with 400 images. "
-        "For rapid prototyping with labeled data.",
+        [DatasetSpecConfig(rid="2-277M", version="5.3.0")],
+        "Graded Test Dataset - 250 subjects per diagnosis category. "
+        "Balanced subset for model evaluation.",
     ),
-    name="cifar10_small_labeled_training",
+    name="graded_test",
 )
 
 datasets_store(
     with_description(
-        [DatasetSpecConfig(rid="B18", version="0.4.0")],
-        "Small labeled testing set with 100 images WITH ground truth. "
-        "For quick evaluation testing with metrics.",
+        [
+            DatasetSpecConfig(rid="2-36BW", version="9.3.0"),
+            DatasetSpecConfig(rid="2-277M", version="5.3.0"),
+        ],
+        "Graded Train + Test combined - balanced datasets for full training pipeline. "
+        "Training: 800 subjects/category, Test: 250 subjects/category.",
     ),
-    name="cifar10_small_labeled_testing",
+    name="graded_combined",
+)
+
+# -----------------------------------------------------------------------------
+# Full LAC datasets (unbalanced, complete data)
+# -----------------------------------------------------------------------------
+
+datasets_store(
+    with_description(
+        [DatasetSpecConfig(rid="2-277G", version="5.3.0")],
+        "Full Training Dataset - 75% of development dataset. "
+        "Unbalanced class distribution. Use for production training.",
+    ),
+    name="full_training",
+)
+
+datasets_store(
+    with_description(
+        [DatasetSpecConfig(rid="2-277C", version="3.3.0")],
+        "Full Test Dataset - 20% of LAC subjects per diagnosis category. "
+        "Use for production model evaluation.",
+    ),
+    name="full_test",
+)
+
+datasets_store(
+    with_description(
+        [
+            DatasetSpecConfig(rid="2-277G", version="5.3.0"),
+            DatasetSpecConfig(rid="2-277C", version="3.3.0"),
+        ],
+        "Full Train + Test combined - complete LAC datasets for production training.",
+    ),
+    name="full_combined",
+)
+
+# -----------------------------------------------------------------------------
+# LAC Complete dataset
+# -----------------------------------------------------------------------------
+
+datasets_store(
+    with_description(
+        [DatasetSpecConfig(rid="2-1S12", version="5.3.0")],
+        "Complete LAC Dataset - all 7021 subjects. "
+        "Use for data exploration or when you need all available data.",
+    ),
+    name="lac_complete",
 )
 
 # -----------------------------------------------------------------------------
 # REQUIRED: default_dataset - used when no dataset is specified
 # -----------------------------------------------------------------------------
-# Note: Using plain list for notebook config compatibility (with_description creates
-# a DictConfig which can't merge with BaseConfig's ListConfig defaults)
+# Using small test dataset as default for quick iteration during development
 
 datasets_store(
-    [DatasetSpecConfig(rid="AX0", version="0.4.0")],
+    [DatasetSpecConfig(rid="5-XW4J", version="0.3.0")],
     name="default_dataset",
 )

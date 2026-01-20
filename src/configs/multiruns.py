@@ -26,9 +26,11 @@ Benefits:
 from deriva_ml.execution import multirun_config
 from configs.sweeps import (
     QUICK_VS_EXTENDED_DESCRIPTION,
+    GRADED_DATASET_DESCRIPTION,
     FULL_DATASET_DESCRIPTION,
     LEARNING_RATE_SWEEP_DESCRIPTION,
     EPOCH_SWEEP_DESCRIPTION,
+    FROZEN_VS_FINETUNE_DESCRIPTION,
 )
 
 # =============================================================================
@@ -39,17 +41,38 @@ from configs.sweeps import (
 multirun_config(
     "quick_vs_extended",
     overrides=[
-        "+experiment=cifar10_quick,cifar10_extended",
+        "+experiment=vgg19_quick,vgg19_extended_graded",
     ],
     description=QUICK_VS_EXTENDED_DESCRIPTION,
 )
 
 multirun_config(
+    "quick_vs_extended_graded",
+    overrides=[
+        "+experiment=vgg19_quick_graded,vgg19_extended_graded",
+    ],
+    description=GRADED_DATASET_DESCRIPTION,
+)
+
+multirun_config(
     "quick_vs_extended_full",
     overrides=[
-        "+experiment=cifar10_quick_full,cifar10_extended_full",
+        "+experiment=vgg19_quick_full,vgg19_extended_full",
     ],
     description=FULL_DATASET_DESCRIPTION,
+)
+
+# =============================================================================
+# Transfer Learning Comparison
+# =============================================================================
+# Compare frozen features vs full fine-tuning
+
+multirun_config(
+    "frozen_vs_finetune",
+    overrides=[
+        "+experiment=vgg19_frozen_graded,vgg19_default_graded",
+    ],
+    description=FROZEN_VS_FINETUNE_DESCRIPTION,
 )
 
 # =============================================================================
@@ -61,9 +84,9 @@ multirun_config(
 multirun_config(
     "lr_sweep",
     overrides=[
-        "+experiment=cifar10_quick",
+        "+experiment=vgg19_default_graded",
         "model_config.epochs=10",
-        "model_config.learning_rate=0.0001,0.001,0.01,0.1",
+        "model_config.learning_rate=0.00001,0.0001,0.001,0.01",
     ],
     description=LEARNING_RATE_SWEEP_DESCRIPTION,
 )
@@ -71,7 +94,7 @@ multirun_config(
 multirun_config(
     "epoch_sweep",
     overrides=[
-        "+experiment=cifar10_extended",
+        "+experiment=vgg19_default_graded",
         "model_config.epochs=5,10,25,50",
     ],
     description=EPOCH_SWEEP_DESCRIPTION,
@@ -85,21 +108,21 @@ multirun_config(
 multirun_config(
     "lr_batch_grid",
     overrides=[
-        "+experiment=cifar10_quick",
+        "+experiment=vgg19_default_graded",
         "model_config.epochs=10",
-        "model_config.learning_rate=0.001,0.01",
-        "model_config.batch_size=64,128",
+        "model_config.learning_rate=0.0001,0.001",
+        "model_config.batch_size=16,32",
     ],
     description="""## Learning Rate and Batch Size Grid Search
 
-**Objective:** Find optimal combination of learning rate and batch size.
+**Objective:** Find optimal combination of learning rate and batch size for VGG19.
 
 ### Parameter Grid
 
 | Parameter | Values |
 |-----------|--------|
-| Learning Rate | 0.001, 0.01 |
-| Batch Size | 64, 128 |
+| Learning Rate | 0.0001, 0.001 |
+| Batch Size | 16, 32 |
 
 **Total runs:** 4 (2 x 2 grid)
 
@@ -108,5 +131,33 @@ multirun_config(
 - Smaller batch sizes may need lower learning rates
 - Larger batch sizes can often tolerate higher learning rates
 - Look for the combination with best test accuracy and stable training
+""",
+)
+
+multirun_config(
+    "dropout_sweep",
+    overrides=[
+        "+experiment=vgg19_default_graded",
+        "model_config.epochs=15",
+        "model_config.dropout_rate=0.3,0.5,0.7",
+    ],
+    description="""## Dropout Rate Sweep
+
+**Objective:** Find optimal dropout rate for regularization.
+
+### Parameter Range
+
+| Dropout | Expected Behavior |
+|---------|-------------------|
+| 0.3 | Light regularization, may overfit |
+| 0.5 | Standard dropout, good balance |
+| 0.7 | Heavy regularization, may underfit |
+
+**Total runs:** 3
+
+### Notes
+
+- Higher dropout helps with smaller datasets
+- Lower dropout preserves more information for larger datasets
 """,
 )

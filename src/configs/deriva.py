@@ -12,10 +12,10 @@ This is used as the default connection when no override is specified.
 
 Example usage:
     # Use default connection
-    uv run src/deriva_run.py
+    uv run deriva-ml-run
 
     # Use a specific connection
-    uv run src/deriva_run.py deriva_ml=eye-ai
+    uv run deriva-ml-run deriva_ml=eye-ai-prod
 """
 
 from hydra_zen import store
@@ -29,16 +29,32 @@ from deriva_ml import DerivaMLConfig
 deriva_store = store(group="deriva_ml")
 
 # REQUIRED: default_deriva - used when no connection is specified
+# Points to the Eye-AI development catalog
 deriva_store(
     DerivaMLConfig,
     name="default_deriva",
-    hostname="localhost",
-    catalog_id=2,
+    hostname="dev.eye-ai.org",
+    catalog_id="eye-ai",
     use_minid=False,
     zen_meta={
         "description": (
-            "Local development catalog (localhost:2) with CIFAR-10 data. "
-            "Schema: cifar10_e2e_test. Use for E2E testing and development."
+            "Eye-AI development catalog (dev.eye-ai.org/eye-ai). "
+            "Schema: eye-ai. Contains fundus images for glaucoma classification."
+        )
+    },
+)
+
+# Production Eye-AI catalog (when available)
+deriva_store(
+    DerivaMLConfig,
+    name="eye-ai-prod",
+    hostname="www.eye-ai.org",
+    catalog_id="eye-ai",
+    use_minid=False,
+    zen_meta={
+        "description": (
+            "Eye-AI production catalog (www.eye-ai.org/eye-ai). "
+            "Use for production model training and deployment."
         )
     },
 )

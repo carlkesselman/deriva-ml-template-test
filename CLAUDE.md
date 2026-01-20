@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DerivaML Model Template - a template for creating ML models integrated with DerivaML, a Python library for reproducible ML workflows backed by a Deriva catalog. It captures code provenance, configuration, and outputs for reproducibility.
+VGG19 Glaucoma Classification - a DerivaML-integrated model for binary glaucoma classification on fundus images. Uses VGG19 pretrained on ImageNet with fine-tuning for glaucoma detection. The model classifies images as either "No Glaucoma" or "Suspected Glaucoma", filtering out "Unknown" labels.
 
 ## Common Commands
 
@@ -16,23 +16,23 @@ uv sync --group=pytorch                   # Add PyTorch support
 
 # Running models (uses Hydra config defaults for host/catalog)
 uv run deriva-ml-run                                  # Run with defaults
-uv run deriva-ml-run model_config=cifar10_quick      # Override model config
-uv run deriva-ml-run +experiment=cifar10_quick       # Use experiment preset
+uv run deriva-ml-run model_config=vgg19_frozen       # Override model config
+uv run deriva-ml-run +experiment=vgg19_quick         # Use experiment preset
 uv run deriva-ml-run dry_run=true                    # Dry run (no catalog writes)
-uv run deriva-ml-run --multirun +experiment=cifar10_quick,cifar10_extended  # Multiple experiments
+uv run deriva-ml-run --multirun +experiment=vgg19_quick_graded,vgg19_extended_graded  # Multiple experiments
 uv run deriva-ml-run --info                          # Show available configs
 
 # Override host/catalog from command line
-uv run deriva-ml-run --host localhost --catalog 45 +experiment=cifar10_quick
+uv run deriva-ml-run --host dev.eye-ai.org --catalog eye-ai +experiment=vgg19_quick
 
 # Notebook execution (uses Hydra config defaults for host/catalog)
-uv run deriva-ml-run-notebook notebooks/notebook_template.ipynb
-uv run deriva-ml-run-notebook notebooks/notebook_template.ipynb assets=my_assets
-uv run deriva-ml-run-notebook notebooks/notebook_template.ipynb --info
+uv run deriva-ml-run-notebook notebooks/roc_analysis.ipynb
+uv run deriva-ml-run-notebook notebooks/roc_analysis.ipynb assets=my_assets
+uv run deriva-ml-run-notebook notebooks/roc_analysis.ipynb --info
 
 # Override host/catalog from command line
-uv run deriva-ml-run-notebook notebooks/notebook_template.ipynb \
-  --host www.eye-ai.org --catalog 2
+uv run deriva-ml-run-notebook notebooks/roc_analysis.ipynb \
+  --host dev.eye-ai.org --catalog eye-ai
 
 # Linting and formatting
 uv run ruff check src/
@@ -46,10 +46,7 @@ uv run bump-version major|minor|patch
 uv run python -m setuptools_scm
 
 # Authentication
-uv run deriva-globus-auth-utils login --host www.eye-ai.org
-
-# Data loading (CIFAR-10 example)
-uv run load-cifar10 --host <hostname> --catalog_id <id> --num_images 500
+uv run deriva-globus-auth-utils login --host dev.eye-ai.org
 ```
 
 ## Architecture
@@ -57,11 +54,11 @@ uv run load-cifar10 --host <hostname> --catalog_id <id> --num_images 500
 ### Configuration System (Hydra-Zen)
 
 All configuration is Python-first using hydra-zen, no YAML files. Configs are in `src/configs/`:
-- `deriva.py` - DerivaML connection configs (local, eye-ai)
-- `datasets.py` - Dataset specifications (test1, test2, test3)
-- `assets.py` - Asset RID configurations (weights_1, weights_2)
+- `deriva.py` - DerivaML connection configs (dev.eye-ai.org, www.eye-ai.org)
+- `datasets.py` - Dataset specifications (test_small, graded, full, etc.)
+- `assets.py` - Asset RID configurations (model weights, predictions)
 - `workflow.py` - Workflow definitions
-- `cifar10_cnn.py` - Model variant configs (7 variants)
+- `vgg19_glaucoma.py` - Model variant configs (9 variants)
 - `experiments.py` - Experiment presets
 
 ### Model Pattern
@@ -145,7 +142,7 @@ Notebooks use the simplified `run_notebook()` API for initialization:
 
    # Run with overrides
    uv run deriva-ml-run-notebook notebooks/my_analysis.ipynb \
-     --host localhost --catalog 45 \
+     --host dev.eye-ai.org --catalog eye-ai \
      assets=different_assets
    ```
 
@@ -169,35 +166,32 @@ When interacting with DerivaML catalogs, **always prefer MCP tools over writing 
 - Use Google docstring format and type hints
 - **Always check function/class signatures before modifying calls** - use `inspect.signature()` or check the source to verify required parameters before editing code that instantiates classes or calls functions
 
-## CIFAR-10 Dataset Requirements
+## Eye-AI Dataset Structure
 
-**IMPORTANT: Always use labeled datasets for experiments that require evaluation or analysis.**
+The Eye-AI catalog contains fundus images with glaucoma diagnosis labels.
 
-The CIFAR-10 catalog contains two types of split datasets:
-- **Unlabeled splits** (`cifar10_split`, `cifar10_small_split`): Test partition has no ground truth labels
-- **Labeled splits** (`cifar10_labeled_split`, `cifar10_small_labeled_split`): Both train and test partitions have ground truth labels
+### Diagnosis Classes
+- **No Glaucoma**: Healthy eye
+- **Suspected Glaucoma**: Glaucoma indicators present
+- **Unknown**: Excluded from binary classification
 
-For any experiment where you need to:
-- Compute accuracy on the test set
-- Generate ROC curves or other evaluation metrics
-- Compare model predictions to ground truth
+### Available Datasets
+- `test_small` (5-XW4J): Small test dataset for quick debugging
+- `subset_10pct_*`: 10% subsets for quick experiments
+- `graded_*`: Balanced datasets (800 train / 250 test per class)
+- `full_*`: Complete LAC datasets for production training
 
-**You MUST use the labeled split datasets:**
-- `cifar10_small_labeled_split` for small dataset experiments
-- `cifar10_labeled_split` for full dataset experiments
-
-The unlabeled splits are only appropriate for training-only runs where test evaluation is not needed.
+**For experiments requiring balanced classes, use graded datasets.**
 
 ## Overriding Configs at Runtime
 
 ```bash
 # Choose different configs (no + prefix for groups with defaults)
-uv run deriva-ml-run datasets=cifar10_small_training model_config=cifar10_quick
+uv run deriva-ml-run datasets=graded_combined model_config=vgg19_frozen
 
 # Override specific fields (use + for adding new fields)
-uv run deriva-ml-run model_config.epochs=50 model_config.learning_rate=0.01
+uv run deriva-ml-run model_config.epochs=50 model_config.learning_rate=0.0001
 
 # Use experiment presets
-uv run deriva-ml-run +experiment=cifar10_extended
+uv run deriva-ml-run +experiment=vgg19_extended_graded
 ```
-
