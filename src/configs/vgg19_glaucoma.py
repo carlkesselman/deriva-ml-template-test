@@ -46,6 +46,8 @@ VGG19GlaucomaConfig = builds(
     weight_decay=1e-4,
     # Image parameters
     image_size=224,
+    # Checkpoint settings - save weights only by default (smaller files)
+    save_optimizer_state=False,
     # Hydra-zen settings
     populate_full_signature=True,
     zen_partial=True,  # Execution context added later
@@ -191,6 +193,20 @@ model_store(
             "Small batch training: batch size 8, reduced learning rate. "
             "For memory-constrained systems or very large images. "
             "More epochs to compensate for fewer updates per epoch."
+        )
+    },
+)
+
+# Full checkpoint - includes optimizer state for resuming training
+model_store(
+    VGG19GlaucomaConfig,
+    name="vgg19_full_checkpoint",
+    save_optimizer_state=True,
+    zen_meta={
+        "description": (
+            "Full checkpoint mode: Saves model weights AND optimizer state. "
+            "Larger file (~1.6GB) but allows resuming training from checkpoint. "
+            "Use when you need to continue training later."
         )
     },
 )

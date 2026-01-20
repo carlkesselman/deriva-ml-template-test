@@ -392,6 +392,8 @@ def vgg19_glaucoma(
     weight_decay: float = 1e-4,
     # Image parameters
     image_size: int = 224,
+    # Checkpoint settings
+    save_optimizer_state: bool = False,
     # Test-only mode
     test_only: bool = False,
     weights_filename: str = "vgg19_glaucoma_weights.pt",
@@ -428,6 +430,9 @@ def vgg19_glaucoma(
         batch_size: Training batch size (default: 32).
         weight_decay: L2 regularization weight decay (default: 1e-4).
         image_size: Input image size (default: 224).
+        save_optimizer_state: If True, save full checkpoint with optimizer state
+            (larger file, needed for resuming training). If False, save only model
+            weights (smaller file, sufficient for inference). Default: False.
         test_only: Skip training and only run evaluation (default: False).
         weights_filename: Filename for weights file (default: vgg19_glaucoma_weights.pt).
         ml_instance: DerivaML instance for catalog access.
@@ -621,9 +626,10 @@ def vgg19_glaucoma(
     weights_file = execution.asset_file_path(
         MLAsset.execution_asset, "vgg19_glaucoma_weights.pt", ExecAssetType.model_file
     )
-    torch.save({
+
+    # Build checkpoint dict - optionally include optimizer state
+    checkpoint = {
         'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
         'config': {
             'pretrained': pretrained,
             'freeze_features': freeze_features,
@@ -632,7 +638,14 @@ def vgg19_glaucoma(
         },
         'training_log': training_log,
         'class_names': class_names,
-    }, weights_file)
+    }
+    if save_optimizer_state:
+        checkpoint['optimizer_state_dict'] = optimizer.state_dict()
+        print("  Including optimizer state (full checkpoint for resuming training)")
+    else:
+        print("  Saving weights only (smaller file, sufficient for inference)")
+
+    torch.save(checkpoint, weights_file)
     print(f"  Saved weights to: {weights_file}")
 
     # Save training log as text
